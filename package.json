@@ -1,0 +1,30 @@
+{
+  "name": "hedera-examples",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@ai-sdk/openai": "^2.0.86",
+    "@buidlerlabs/hak-memejob-plugin": "^1.1.0",
+    "@hashgraph/hedera-agent-kit": "^4.0.0",
+    "@hashgraph/hedera-agent-kit-ai-sdk": "^1.0.0",
+    "@hashgraph/hedera-agent-kit-elizaos": "^1.0.0",
+    "@hashgraph/sdk": "^2.73.2",
+    "@hiero-ledger/sdk": "^2.84.0",
+    "ai": "^6.0.86",
+    "axios": "^1.12.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.2",
+    "express": "^5.1.0"
+  },
+  "description": "",
+  "overrides": {
+    "protobufjs": "8.3.0"
+  }
+}

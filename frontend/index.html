@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hedera AI Agent | Intelligent Hedera Workspace</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="page-shell">
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+    <div class="ambient ambient-three"></div>
+
+    <header class="site-header">
+      <div class="brand-mark" aria-hidden="true">
+        <img src="untitled.png" alt="Hedera AI Agent">
+      </div>
+      <div class="brand-copy">
+        <p class="brand-name">Your Personal Hedera AI Agent: Hashbot</p>
+        <p class="brand-subtitle">Intelligent guidance for the Hedera ecosystem</p>
+      </div>
+      <div class="header-actions">
+        <button type="button" id="connectWalletBtn" class="wallet-link">Connect HashPack</button>
+        <span id="walletStatus" class="wallet-status">Wallet not connected</span>
+      </div>
+    </header>
+
+    <main class="hero-layout">
+      <section class="hero-copy">
+        <p class="eyebrow">Hedera-native intelligence</p>
+        <h1>Ask questions. Build faster on Hedera.</h1>
+        <p class="hero-text">
+          Explore Hedera concepts, inspect accounts, understand services, and execute supported actions through a single AI workspace designed for developers, individuals, and teams on Hedera.
+        </p>
+
+        <div class="hero-actions">
+        </div>
+
+        <div class="signal-grid">
+          <article>
+            <strong>HBAR + Network</strong>
+            <span>Balances, accounts, staking, fees, and transactions</span>
+          </article>
+          <article>
+            <strong>Core Services</strong>
+            <span>HTS, HCS, smart contracts, mirror nodes, and more</span>
+          </article>
+          <article>
+            <strong>Developer Workflow</strong>
+            <span>Architecture guidance, SDK questions, and next steps</span>
+          </article>
+        </div>
+
+        <div class="starter-block">
+          <p>Try a prompt</p>
+          <div class="starter-prompts">
+            <button type="button" class="starter-chip" data-prompt="What makes Hedera different from a traditional blockchain?">What makes Hedera different?</button>
+            <button type="button" class="starter-chip" data-prompt="Explain Hedera Token Service like I'm evaluating it for a product team.">Explain Hedera Token Service</button>
+            <button type="button" class="starter-chip" data-prompt="What should I know before building on Hedera testnet?">Building on Hedera testnet</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="chat-panel" id="chat-panel">
+        <div class="chat-bot-wrap" aria-hidden="true">
+          <img src="untitled.png" alt="" class="chat-bot-image">
+        </div>
+
+        <div class="chat-frame">
+          <div class="chat-frame-header">
+            <div>
+              <h2>Your Personal Hedera AI Agent: Hashbot</h2>
+            </div>
+          </div>
+
+          <div id="chatMessages" class="chat-messages"></div>
+
+          <form id="chatForm" class="chat-form">
+            <label class="sr-only" for="chatInput">Ask the Hedera AI Agent a question</label>
+            <input type="text" id="chatInput" placeholder="Ask about accounts, HTS, HCS, smart contracts, mirror nodes, or your Hedera balance" autocomplete="off">
+            <button type="submit" id="chatSubmit">Send</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

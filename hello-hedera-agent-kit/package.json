@@ -1,0 +1,24 @@
+{
+  "name": "hello-hedera-agent-kit",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "overrides": {
+    "protobufjs": "8.3.0"
+  },
+  "dependencies": {
+    "@ai-sdk/google": "^3.0.75",
+    "@ai-sdk/openai": "^3.0.64",
+    "@hashgraph/hedera-agent-kit": "^4.0.0",
+    "@hashgraph/hedera-agent-kit-ai-sdk": "^1.0.0",
+    "@hiero-ledger/sdk": "^2.84.0",
+    "dotenv": "^17.4.2"
+  }
+}

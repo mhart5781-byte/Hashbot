@@ -1,0 +1,7 @@
+.vercel
+node_modules
+
+.env
+*.log
+*.err
+hello-hedera-agent-kit/.env
