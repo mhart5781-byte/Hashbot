@@ -37,6 +37,12 @@ if (!process.env.HASHCONNECT_PROJECT_ID) {
 const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
 const hasHederaOperator = Boolean(process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY);
 
+function normalizeNetworkType(raw) {
+  return String(raw || '').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+}
+
+const configuredNetworkType = normalizeNetworkType(process.env.HEDERA_NETWORK || 'mainnet');
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'frontend')));
@@ -44,7 +50,7 @@ app.use(express.static(path.join(__dirname, 'frontend')));
 const baseModel = hasOpenAIKey ? openai('gpt-4o') : null;
 
 const operatorClient = hasHederaOperator
-  ? Client.forTestnet().setOperator(
+  ? Client.forName(configuredNetworkType).setOperator(
     process.env.HEDERA_ACCOUNT_ID,
     PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY),
   )
@@ -75,7 +81,7 @@ const BASE_SYSTEM_PROMPT =
   'You are a Hedera expert assistant. Answer clearly and concisely with practical, developer-friendly guidance.';
 
 const EXECUTION_PROMPT =
-  `${BASE_SYSTEM_PROMPT} HBAR transfers and wallet balance checks are executable in this chat. For NFT and memecoin purchase requests, always use the already connected wallet context from the browser session and never ask the user for a wallet address.`;
+  `${BASE_SYSTEM_PROMPT} HBAR transfers and wallet balance checks are executable in this chat. For NFT and memecoin purchase requests, always use the already connected wallet context from the browser session and never ask the user for a wallet address. For HTS token market-cap, price, liquidity, or ranking questions, do not tell the user to check external websites. If live data is unavailable in the app, say that directly instead of redirecting elsewhere.`;
 
 const ACTION_INTENT_REGEX = /\b(send|transfer|pay|balance|wallet|account\s+balance|check\s+balance)\b/i;
 const TRANSFER_INTENT_REGEX = /\b(send|transfer|pay)\b.*\bhbar\b/i;
@@ -84,6 +90,7 @@ const MY_BALANCE_INTENT_REGEX = /\b(my|mine)\b.*\b(hbar\s+)?balance\b|\b(hbar\s+
 const SENTX_INTENT_REGEX = /\b(sentx|nft\s+on\s+sentx|sentx\s+nfts?|sentx\s+collections?|sentx\s+volume|sentx\s+sales?)\b/i;
 const MEMEJOB_INTENT_REGEX = /\b(memejob|memejob\.fun|memecoins?|meme\s+coins?|tokens?\s+on\s+memejob)\b/i;
 const SAUCERSWAP_INTENT_REGEX = /\b(saucerswap|saucer\s*swap|sauce|dex\s+tokens|saucerswap\s+tokens?)\b/i;
+const HTS_MARKET_CAP_INTENT_REGEX = /\b(market\s*caps?|marketcaps?|fully\s+diluted\s+value|fdv|token\s*caps?|market\s+value|largest\s+tokens?|top\s+hts\s+tokens?)\b/i;
 const BONZO_INTENT_REGEX = /\b(bonzo|bonzo\s+finance|bonzo\s+lend|bonzo\s+api|lending\s+pools?\s+on\s+bonzo|debtors?\s+on\s+bonzo)\b/i;
 const MEMEJOB_MARKET_ACTION_INTENT_REGEX = /\b(memejob|memejob\.fun|memecoin|memecoins)\b.*\b(create|launch|buy|purchase|sell|trade)\b|\b(create|launch|buy|purchase|sell|trade)\b.*\b(memejob|memejob\.fun|memecoin|memecoins)\b/i;
 const NFT_MARKET_ACTION_INTENT_REGEX = /\b(buy|purchase|mint)\b.*\b(nft|sentx|serial|collection)\b|\b(nft|sentx|serial|collection)\b.*\b(buy|purchase|mint)\b/i;
@@ -92,6 +99,9 @@ const MEMECOIN_PURCHASE_INTENT_REGEX = /\b(buy|purchase)\b.*\b(memecoin|meme\s*c
 const MEMEJOB_SUPABASE_URL = 'https://afcwmixfmcntygibknfw.supabase.co';
 const MEMEJOB_SUPABASE_ANON_KEY = process.env.MEMEJOB_SUPABASE_ANON_KEY
   || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFmY3dtaXhmbWNudHlnaWJrbmZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAyMTk4NTcsImV4cCI6MjA0NTc5NTg1N30.sYYe5zTSTrJJiII2ug0PbDlubEVUgNTLewIok_dTMEY';
+const SENTX_API_BASE_URL = 'https://gbackend.sentx.io';
+const SENTX_API_KEY = (process.env.SENTX_API_KEY || '').trim();
+const SENTX_API_KEY_HEADER = (process.env.SENTX_API_KEY_HEADER || 'x-api-key').trim();
 const SAUCERSWAP_API_URL = 'https://api.saucerswap.finance/tokens';
 const SAUCERSWAP_API_KEY = process.env.SAUCERSWAP_API_KEY
   || '875e1017-87b8-4b12-8301-6aa1f1aa073b';
@@ -186,11 +196,294 @@ async function fetchJson(url, options = {}) {
   }
 }
 
+function getMirrorNodeRestBaseUrl(networkType) {
+  return normalizeNetworkType(networkType) === 'mainnet'
+    ? 'https://mainnet-public.mirrornode.hedera.com/api/v1'
+    : 'https://testnet.mirrornode.hedera.com/api/v1';
+}
+
+function getHtsMarketDataNetworkType(prompt, requestedNetworkType) {
+  const text = String(prompt || '').toLowerCase();
+  if (text.includes('testnet')) {
+    return 'testnet';
+  }
+  if (text.includes('mainnet')) {
+    return 'mainnet';
+  }
+  return 'mainnet';
+}
+
+function extractTokenDecimals(tokenInfo) {
+  const decimals = Number(tokenInfo?.decimals ?? 0);
+  return Number.isFinite(decimals) && decimals >= 0 ? decimals : 0;
+}
+
+function extractTokenSupply(tokenInfo) {
+  const rawSupply = tokenInfo?.total_supply ?? tokenInfo?.totalSupply ?? null;
+  const supply = typeof rawSupply === 'string' ? Number(rawSupply) : Number(rawSupply);
+  if (!Number.isFinite(supply)) {
+    return null;
+  }
+
+  const decimals = extractTokenDecimals(tokenInfo);
+  return supply / (10 ** decimals);
+}
+
+function formatUsd(value) {
+  if (!Number.isFinite(value)) {
+    return 'n/a';
+  }
+
+  return `$${value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function formatTokenPrice(value) {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 'n/a';
+  }
+
+  if (value >= 1) {
+    return `$${value.toLocaleString('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 6,
+    })}`;
+  }
+
+  return `$${value.toLocaleString('en-US', {
+    minimumFractionDigits: 6,
+    maximumFractionDigits: 10,
+  })}`;
+}
+
+function formatTokenUnits(value) {
+  if (!Number.isFinite(value)) {
+    return 'n/a';
+  }
+
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  });
+}
+
+function normalizeTokenLookupKey(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/\[[^\]]+\]/g, '')
+    .replace(/[^a-z0-9.]/g, '');
+}
+
+function extractTokenSearchTerms(prompt) {
+  const text = String(prompt || '');
+  const explicitTerms = new Set();
+
+  for (const match of text.matchAll(/\b0\.0\.\d+\b/gi)) {
+    explicitTerms.add(match[0]);
+  }
+
+  for (const match of text.matchAll(/\$([A-Za-z][A-Za-z0-9._-]{1,19})/g)) {
+    explicitTerms.add(match[1]);
+  }
+
+  const symbolMatch = text.match(/\bsymbol\s+([A-Za-z0-9.\[\]-]{2,20})\b/i);
+  if (symbolMatch) {
+    explicitTerms.add(symbolMatch[1]);
+  }
+
+  const stopWords = new Set([
+    'a',
+    'an',
+    'and',
+    'cap',
+    'caps',
+    'current',
+    'fdv',
+    'for',
+    'fully',
+    'hts',
+    'is',
+    'liquidity',
+    'latest',
+    'market',
+    'marketcap',
+    'largest',
+    'live',
+    'of',
+    'on',
+    'price',
+    'real',
+    'ranking',
+    'rankings',
+    'supply',
+    'the',
+    'time',
+    'token',
+    'tokens',
+    'top',
+    'value',
+    'volume',
+    'what',
+    'whats',
+  ]);
+
+  if (explicitTerms.size) {
+    return [...explicitTerms].slice(0, 6);
+  }
+
+  const contentWords = [];
+  const words = text.match(/[A-Za-z][A-Za-z0-9.-]{1,24}/g) || [];
+  for (const word of words) {
+    const normalized = normalizeTokenLookupKey(word);
+    if (normalized.length >= 2 && !stopWords.has(normalized)) {
+      contentWords.push(word);
+    }
+  }
+
+  if (contentWords.length <= 2) {
+    return [...new Set(contentWords)].slice(0, 6);
+  }
+
+  return [];
+}
+
+function getTokenMatchScore(token, searchTerms) {
+  const tokenId = String(token?.id || token?.token_id || '');
+  const normalizedId = normalizeTokenLookupKey(tokenId);
+  const symbol = String(token?.symbol || '');
+  const normalizedSymbol = normalizeTokenLookupKey(symbol);
+  const name = String(token?.name || '');
+  const normalizedName = normalizeTokenLookupKey(name);
+  const nameWords = name
+    .split(/[^A-Za-z0-9.]+/)
+    .map((word) => normalizeTokenLookupKey(word))
+    .filter(Boolean);
+
+  return searchTerms.reduce((score, term) => {
+    const normalizedTerm = normalizeTokenLookupKey(term);
+    if (!normalizedTerm) {
+      return score;
+    }
+    if (normalizedId && normalizedId === normalizedTerm) {
+      return score + 300;
+    }
+    if (normalizedSymbol && normalizedSymbol === normalizedTerm) {
+      return score + 220;
+    }
+    if (normalizedName && normalizedName === normalizedTerm) {
+      return score + 180;
+    }
+    if (nameWords.includes(normalizedTerm)) {
+      return score + 140;
+    }
+    if (normalizedSymbol && normalizedSymbol.includes(normalizedTerm)) {
+      return score + 90;
+    }
+    if (normalizedName && normalizedName.includes(normalizedTerm)) {
+      return score + 70;
+    }
+    return score;
+  }, 0);
+}
+
+function mergeRankedTokens(snapshot, tokens, searchTerms) {
+  const merged = new Map();
+
+  for (const token of tokens) {
+    const tokenId = token?.id || token?.token_id;
+    if (!tokenId) {
+      continue;
+    }
+
+    const pricedToken = snapshot.tokens.find((candidate) => candidate.id === tokenId);
+    const mergedToken = pricedToken
+      ? { ...token, ...pricedToken, id: tokenId }
+      : {
+        id: tokenId,
+        name: token?.name || 'Unknown token',
+        symbol: token?.symbol || '',
+        priceUsd: null,
+      };
+
+    const score = getTokenMatchScore(mergedToken, searchTerms)
+      + (Number.isFinite(Number(mergedToken.priceUsd)) && Number(mergedToken.priceUsd) > 0 ? 5 : 0);
+
+    const existing = merged.get(tokenId);
+    if (!existing || score > existing.score) {
+      merged.set(tokenId, { token: mergedToken, score });
+    }
+  }
+
+  return [...merged.values()]
+    .filter((entry) => entry.score > 0)
+    .sort((a, b) => b.score - a.score || Number(b.token.priceUsd || 0) - Number(a.token.priceUsd || 0))
+    .map((entry) => entry.token);
+}
+
+async function searchMirrorNodeTokens(term, networkType) {
+  const baseUrl = getMirrorNodeRestBaseUrl(networkType);
+  const trimmedTerm = String(term || '').trim();
+  if (!trimmedTerm) {
+    return [];
+  }
+
+  if (/^0\.0\.\d+$/.test(trimmedTerm)) {
+    try {
+      const token = await getMirrorNodeTokenInfo(trimmedTerm, networkType);
+      return token ? [token] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  const [bySymbol, byName] = await Promise.all([
+    fetchJson(`${baseUrl}/tokens?symbol=${encodeURIComponent(trimmedTerm)}&limit=10`).catch(() => ({ tokens: [] })),
+    fetchJson(`${baseUrl}/tokens?name=${encodeURIComponent(trimmedTerm)}&limit=10`).catch(() => ({ tokens: [] })),
+  ]);
+
+  return [...(Array.isArray(bySymbol?.tokens) ? bySymbol.tokens : []), ...(Array.isArray(byName?.tokens) ? byName.tokens : [])];
+}
+
+async function resolveHtsMarketTokens(prompt, networkType, snapshot) {
+  const searchTerms = extractTokenSearchTerms(prompt);
+  if (!searchTerms.length) {
+    return [];
+  }
+
+  const snapshotMatches = snapshot.tokens.filter((token) => getTokenMatchScore(token, searchTerms) > 0);
+  const mirrorMatches = await Promise.all(searchTerms.slice(0, 4).map((term) => searchMirrorNodeTokens(term, networkType)));
+
+  return mergeRankedTokens(snapshot, [...snapshotMatches, ...mirrorMatches.flat()], searchTerms).slice(0, 5);
+}
+
+function getRequestedHtsTokenLimit(prompt) {
+  const searchTerms = extractTokenSearchTerms(prompt);
+  if (!searchTerms.length) {
+    return 5;
+  }
+
+  return Math.min(5, searchTerms.length);
+}
+
+async function getMirrorNodeTokenInfo(tokenId, networkType) {
+  const baseUrl = getMirrorNodeRestBaseUrl(networkType);
+  return fetchJson(`${baseUrl}/tokens/${encodeURIComponent(tokenId)}`);
+}
+
 async function getSentxSnapshot() {
+  const sentxAuthHeaders = SENTX_API_KEY
+    ? { [SENTX_API_KEY_HEADER]: SENTX_API_KEY }
+    : {};
+
   const [featuredRes, salesRes, launchpadRes] = await Promise.all([
-    fetchJson('https://gbackend.sentx.io/global/getfeatured'),
-    fetchJson('https://gbackend.sentx.io/global/getSalesOfTheWeek'),
-    fetchJson('https://gbackend.sentx.io/getcollectionlist?mintEventType=index&limit=6&offset=0&sortOption=latest-activity'),
+    fetchJson(`${SENTX_API_BASE_URL}/global/getfeatured`, { headers: sentxAuthHeaders }),
+    fetchJson(`${SENTX_API_BASE_URL}/global/getSalesOfTheWeek`, { headers: sentxAuthHeaders }),
+    fetchJson(
+      `${SENTX_API_BASE_URL}/getcollectionlist?mintEventType=index&limit=6&offset=0&sortOption=latest-activity`,
+      { headers: sentxAuthHeaders },
+    ),
   ]);
 
   const featured = Array.isArray(featuredRes?.data?.featured) ? featuredRes.data.featured : [];
@@ -224,7 +517,7 @@ async function getSentxSnapshot() {
 
   return {
     asOf: new Date().toISOString(),
-    source: 'https://gbackend.sentx.io',
+    source: SENTX_API_BASE_URL,
     topCollections,
     topSales,
     launchpadHighlights,
@@ -363,6 +656,87 @@ async function buildSaucerSwapExpertAnswer(prompt) {
   });
 
   return result.text;
+}
+
+async function buildHtsMarketCapAnswer(prompt, networkType) {
+  const marketDataNetworkType = getHtsMarketDataNetworkType(prompt, networkType);
+  const snapshot = await getSaucerSwapSnapshot(prompt);
+  const requestedTokens = await resolveHtsMarketTokens(prompt, marketDataNetworkType, snapshot);
+  const requestedTokenLimit = getRequestedHtsTokenLimit(prompt);
+  const rankedMarketTokens = [...snapshot.tokens]
+    .filter((t) => Number.isFinite(t.priceUsd) && t.priceUsd > 0 && (t.inTopPools || t.dueDiligenceComplete))
+    .sort((a, b) => b.priceUsd - a.priceUsd);
+  const fallbackTokens = [
+    ...snapshot.featured,
+    ...rankedMarketTokens.slice(0, 40),
+  ];
+  const candidateTokens = (requestedTokens.length ? requestedTokens : fallbackTokens)
+    .filter((token, index, tokens) => tokens.findIndex((candidate) => candidate.id === token.id) === index)
+    .slice(0, requestedTokens.length ? requestedTokenLimit : 40);
+
+  const tokenRows = await Promise.all(candidateTokens.map(async (token) => {
+    try {
+      const tokenInfo = await getMirrorNodeTokenInfo(token.id, marketDataNetworkType);
+      const totalSupply = extractTokenSupply(tokenInfo);
+      const decimals = extractTokenDecimals(tokenInfo);
+      const priceUsd = Number(token.priceUsd);
+      const marketCapUsd = Number.isFinite(totalSupply) && Number.isFinite(priceUsd) && priceUsd > 0
+        ? totalSupply * priceUsd
+        : null;
+
+      return {
+        token,
+        priceUsd,
+        totalSupply,
+        decimals,
+        marketCapUsd,
+      };
+    } catch (error) {
+      return {
+        token,
+        priceUsd: Number(token.priceUsd),
+        totalSupply: null,
+        decimals: null,
+        marketCapUsd: null,
+        error: error?.message || String(error),
+      };
+    }
+  }));
+
+  const orderedRows = requestedTokens.length
+    ? tokenRows
+    : [...tokenRows]
+      .filter((row) => Number.isFinite(row.marketCapUsd))
+      .sort((a, b) => (b.marketCapUsd || 0) - (a.marketCapUsd || 0))
+      .slice(0, 5);
+
+  if (!orderedRows.length) {
+    return `HTS live market data is currently unavailable for that prompt. Source checked: ${snapshot.source}.`;
+  }
+
+  if (requestedTokens.length && orderedRows.length === 1) {
+    const row = orderedRows[0];
+    const tokenLabel = `${row.token.name}${row.token.symbol ? ` (${row.token.symbol})` : ''}`;
+    const tokenId = row.token.id || 'n/a';
+    const marketCap = Number.isFinite(row.marketCapUsd) ? formatUsd(row.marketCapUsd) : 'n/a';
+    return `${tokenLabel} [${tokenId}]: ${marketCap}`;
+  }
+
+  const header = `HTS live market data (sources: SaucerSwap + Hedera Mirror Node ${marketDataNetworkType}, as of ${snapshot.asOf}):`;
+  const lines = orderedRows.map((row, index) => {
+    const tokenLabel = `${row.token.name}${row.token.symbol ? ` (${row.token.symbol})` : ''}`;
+    const tokenId = row.token.id || 'n/a';
+    const marketCap = Number.isFinite(row.marketCapUsd) ? formatUsd(row.marketCapUsd) : 'n/a';
+    const price = formatTokenPrice(row.priceUsd);
+    const supply = formatTokenUnits(row.totalSupply);
+    const caveat = marketCap === 'n/a'
+      ? 'No live USD price was available from SaucerSwap for this token, so market cap could not be computed.'
+      : null;
+
+    return `${index + 1}. ${tokenLabel} [${tokenId}]\nPrice: ${price}\nTotal supply: ${supply}\nMarket cap: ${marketCap}${caveat ? `\nNote: ${caveat}` : ''}`;
+  }).join('\n\n');
+
+  return `${header}\n\n${lines}`;
 }
 
 async function tryFetchBonzoEndpoint(path) {
@@ -579,7 +953,7 @@ async function maybeHandleMemeCoinPurchaseAction({ prompt, walletConnected, wall
   };
 }
 
-async function maybeHandleProjectDataIntent(prompt) {
+async function maybeHandleProjectDataIntent(prompt, networkType) {
   if (SENTX_INTENT_REGEX.test(prompt)) {
     const snapshot = await getSentxSnapshot();
 
@@ -632,6 +1006,14 @@ async function maybeHandleProjectDataIntent(prompt) {
         `memejob.fun real-time memecoin snapshot (source: ${snapshot.source}, as of ${snapshot.asOf}):\n\n`
         + `Latest active memecoins:\n${latest}\n\n`
         + `Top by current price field:\n${priced}`,
+    };
+  }
+
+  if (HTS_MARKET_CAP_INTENT_REGEX.test(prompt)) {
+    const marketCapAnswer = await buildHtsMarketCapAnswer(prompt, networkType);
+    return {
+      handled: true,
+      response: marketCapAnswer,
     };
   }
 
@@ -740,8 +1122,21 @@ async function maybeHandleProjectDataIntent(prompt) {
   return { handled: false };
 }
 
-async function getWalletSnapshot(accountId) {
-  const response = await fetch(`https://testnet.mirrornode.hedera.com/api/v1/accounts/${accountId}`, {
+function isHtsMarketDataPrompt(prompt) {
+  const text = String(prompt || '');
+  return HTS_MARKET_CAP_INTENT_REGEX.test(text)
+    || (/\bhts\b/i.test(text) && /\b(price|prices|liquidity|volume|ranking|rankings|top|largest)\b/i.test(text));
+}
+
+function getMirrorNodeBaseUrl(networkType) {
+  return normalizeNetworkType(networkType) === 'mainnet'
+    ? 'https://mainnet-public.mirrornode.hedera.com'
+    : 'https://testnet.mirrornode.hedera.com';
+}
+
+async function getWalletSnapshot(accountId, networkType) {
+  const mirrorNodeBaseUrl = getMirrorNodeBaseUrl(networkType);
+  const response = await fetch(`${mirrorNodeBaseUrl}/api/v1/accounts/${accountId}`, {
     headers: { accept: 'application/json' },
   });
 
@@ -786,7 +1181,7 @@ async function executeHbarTransfer({ amount, toAccountId, fromAccountId, sourceP
       throw new Error('Source private key is required when transferring from a non-operator account.');
     }
     signerKey = PrivateKey.fromStringECDSA(sourcePrivateKey);
-    txClient = Client.forTestnet().setOperator(resolvedFrom, signerKey);
+    txClient = Client.forName(configuredNetworkType).setOperator(resolvedFrom, signerKey);
   }
 
   const tx = await new TransferTransaction()
@@ -835,6 +1230,7 @@ async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, wal
       }
 
       const connectedAccountId = normalizeAccountId(walletAccountId);
+      const connectedNetworkType = getNetworkType(connectedAccountId);
       if (!connectedAccountId) {
         return {
           handled: true,
@@ -842,20 +1238,20 @@ async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, wal
         };
       }
 
-      const snapshot = await getWalletSnapshot(connectedAccountId);
-      const networkType = getNetworkType(connectedAccountId);
+      const snapshot = await getWalletSnapshot(connectedAccountId, connectedNetworkType);
       const tokenLines = snapshot.tokens.length
         ? `\nTop token balances:\n${snapshot.tokens.map((t) => `- ${t.tokenId}: ${t.balance}`).join('\n')}`
         : '';
 
       return {
         handled: true,
-        response: `Your connected wallet (${snapshot.accountId} - ${networkType}) balance: ${snapshot.hbar.toFixed(8)} HBAR.${tokenLines}`,
+        response: `Your connected wallet (${snapshot.accountId} - ${connectedNetworkType}) balance: ${snapshot.hbar.toFixed(8)} HBAR.${tokenLines}`,
       };
     }
 
     const accountId = parseBalancePrompt(prompt);
-    const snapshot = await getWalletSnapshot(accountId);
+    const accountNetworkType = getNetworkType(accountId);
+    const snapshot = await getWalletSnapshot(accountId, accountNetworkType);
 
     const tokenLines = snapshot.tokens.length
       ? `\nTop token balances:\n${snapshot.tokens.map((t) => `- ${t.tokenId}: ${t.balance}`).join('\n')}`
@@ -872,21 +1268,17 @@ async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, wal
 
 // Final refinement to ensure getNetworkType always returns 'testnet' or 'mainnet'
 function getNetworkType(accountId, walletNetworkType) {
-  if (String(walletNetworkType || '').toLowerCase() === 'mainnet') {
-    return 'mainnet';
-  }
-
-  if (String(walletNetworkType || '').toLowerCase() === 'testnet') {
-    return 'testnet';
+  const walletResolved = normalizeNetworkType(walletNetworkType);
+  if (walletNetworkType) {
+    return walletResolved;
   }
 
   const normalized = normalizeAccountId(accountId);
   if (!normalized) {
-    return 'testnet';
+    return configuredNetworkType;
   }
 
-  const [shard, realm] = normalized.split('.').map((v) => Number(v));
-  return shard === 0 && realm === 0 ? 'testnet' : 'mainnet';
+  return configuredNetworkType;
 }
 
 app.get('/health', (req, res) => {
@@ -895,7 +1287,7 @@ app.get('/health', (req, res) => {
 
 app.get('/client-config', (req, res) => {
   res.json({
-    network: 'testnet',
+    network: configuredNetworkType,
     hashconnectProjectId: process.env.HASHCONNECT_PROJECT_ID || '',
   });
 });
@@ -939,6 +1331,15 @@ app.post('/agent', async (req, res) => {
   const trimmedPrompt = clampText(prompt, MAX_MESSAGE_CHARS);
 
   try {
+    if (isHtsMarketDataPrompt(trimmedPrompt)) {
+      const marketCapAnswer = await buildHtsMarketCapAnswer(trimmedPrompt, networkType);
+      return res.json({
+        response: marketCapAnswer,
+        actionUrl: null,
+        networkType,
+      });
+    }
+
     const memecoinPurchaseResult = await maybeHandleMemeCoinPurchaseAction({
       prompt: trimmedPrompt,
       walletConnected: Boolean(walletConnected),
@@ -977,7 +1378,7 @@ app.post('/agent', async (req, res) => {
       });
     }
 
-    const projectDataResult = await maybeHandleProjectDataIntent(trimmedPrompt);
+    const projectDataResult = await maybeHandleProjectDataIntent(trimmedPrompt, networkType);
     if (projectDataResult.handled) {
       return res.json({
         response: projectDataResult.response,

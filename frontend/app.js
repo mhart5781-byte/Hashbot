@@ -40,6 +40,10 @@ function getConfiguredNetworkType() {
   return normalizeNetworkType(clientConfig?.network);
 }
 
+function getConfiguredLedgerId() {
+  return getConfiguredNetworkType() === 'mainnet' ? LedgerId.MAINNET : LedgerId.TESTNET;
+}
+
 // Update the wallet status to dynamically display Testnet or Mainnet
 function updateWalletStatus(networkType = connectedNetworkType) {
   const safeNetworkType = normalizeNetworkType(networkType);
@@ -101,7 +105,7 @@ async function initHashConnect() {
     url: window.location.origin,
   };
 
-  hashconnect = new HashConnect(LedgerId.TESTNET, projectId, appMetadata, false);
+  hashconnect = new HashConnect(getConfiguredLedgerId(), projectId, appMetadata, false);
 
   hashconnect.pairingEvent.on((session) => {
     pairingData = session;
