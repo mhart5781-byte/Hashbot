@@ -13,6 +13,7 @@ import { Client, PrivateKey, TransferTransaction, Hbar } from '@hiero-ledger/sdk
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootEnvPath = path.join(__dirname, '.env');
 const helloAgentEnvPath = path.join(__dirname, 'hello-hedera-agent-kit', '.env');
+const DEFAULT_HASHCONNECT_PROJECT_ID = '532ad873d6cccfb126b030d598b802ae';
 
 if (fs.existsSync(rootEnvPath)) {
   dotenv.config({ path: rootEnvPath, override: false });
@@ -27,6 +28,10 @@ if (!process.env.HASHCONNECT_PROJECT_ID && fs.existsSync(helloAgentEnvPath)) {
   if (parsedHelloEnv.HASHCONNECT_PROJECT_ID) {
     process.env.HASHCONNECT_PROJECT_ID = parsedHelloEnv.HASHCONNECT_PROJECT_ID;
   }
+}
+
+if (!process.env.HASHCONNECT_PROJECT_ID) {
+  process.env.HASHCONNECT_PROJECT_ID = DEFAULT_HASHCONNECT_PROJECT_ID;
 }
 
 const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
