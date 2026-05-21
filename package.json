@@ -1,0 +1,24 @@
+{
+  "name": "hashbot",
+  "version": "1.0.0",
+  "description": "Hashbot Express Application",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "express",
+    "hashbot"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@vercel/analytics": "^2.0.1",
+    "express": "^4.22.2"
+  },
+  "engines": {
+    "node": ">=14"
+  }
+}
