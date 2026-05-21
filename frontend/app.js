@@ -41,7 +41,8 @@ function appendMessage(role, text) {
 }
 
 function normalizeNetworkType(raw) {
-  return String(raw || '').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const normalized = String(raw || '').toLowerCase().trim();
+  return normalized.includes('mainnet') ? 'mainnet' : 'testnet';
 }
 
 function normalizeSupportedNetworkTypes(raw) {

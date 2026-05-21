@@ -38,7 +38,8 @@ const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
 const hasHederaOperator = Boolean(process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY);
 
 function normalizeNetworkType(raw) {
-  return String(raw || '').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
+  const normalized = String(raw || '').toLowerCase().trim();
+  return normalized.includes('mainnet') ? 'mainnet' : 'testnet';
 }
 
 function parseSupportedNetworkTypes(raw) {
@@ -1221,7 +1222,14 @@ async function executeHbarTransfer({ amount, toAccountId, fromAccountId, sourceP
   };
 }
 
-async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, walletAccountId, walletConnected }) {
+async function maybeExecuteWalletAction({
+  prompt,
+  fromAccountId,
+  privateKey,
+  walletAccountId,
+  walletConnected,
+  walletNetworkType,
+}) {
   if (TRANSFER_INTENT_REGEX.test(prompt)) {
     if (!walletConnected || !walletAccountId) {
       return {
@@ -1249,7 +1257,7 @@ async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, wal
       }
 
       const connectedAccountId = normalizeAccountId(walletAccountId);
-      const connectedNetworkType = getNetworkType(connectedAccountId);
+      const connectedNetworkType = getNetworkType(connectedAccountId, walletNetworkType);
       if (!connectedAccountId) {
         return {
           handled: true,
@@ -1417,6 +1425,7 @@ app.post('/agent', async (req, res) => {
         privateKey,
         walletAccountId,
         walletConnected,
+        walletNetworkType,
       });
 
       if (actionResult.handled) {
