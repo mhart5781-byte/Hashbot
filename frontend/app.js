@@ -1,5 +1,5 @@
 import { HashConnect, HashConnectConnectionState } from 'https://esm.sh/hashconnect@3.0.12';
-import { LedgerId, AccountId, Hbar, TransferTransaction } from 'https://esm.sh/@hashgraph/sdk';
+import { AccountId, Hbar, TransferTransaction } from 'https://esm.sh/@hashgraph/sdk';
 
 const conversationHistory = [];
 const input = document.getElementById('chatInput');
@@ -8,6 +8,12 @@ const starterChips = document.querySelectorAll('.starter-chip');
 const connectWalletBtn = document.getElementById('connectWalletBtn');
 const openPairingBtn = document.getElementById('openPairingBtn');
 const walletStatusEl = document.getElementById('walletStatus');
+const networkSelectEl = document.getElementById('networkSelect');
+
+const NETWORK_LABELS = {
+  mainnet: 'Mainnet',
+  testnet: 'Testnet',
+};
 
 let hashconnect;
 let pairingData = null;
@@ -15,6 +21,8 @@ let connectedAccountId = null;
 let clientConfig = null;
 let pairingUri = '';
 let connectedNetworkType = 'testnet';
+let selectedNetworkType = 'testnet';
+let supportedNetworkTypes = ['testnet'];
 
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -36,26 +44,81 @@ function normalizeNetworkType(raw) {
   return String(raw || '').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
-function getConfiguredNetworkType() {
-  return normalizeNetworkType(clientConfig?.network);
+function normalizeSupportedNetworkTypes(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    return ['mainnet', 'testnet'];
+  }
+
+  const normalized = Array.from(new Set(raw.map((item) => normalizeNetworkType(item))));
+  return normalized.length > 0 ? normalized : ['mainnet', 'testnet'];
 }
 
-function getConfiguredLedgerId() {
-  return getConfiguredNetworkType() === 'mainnet' ? LedgerId.MAINNET : LedgerId.TESTNET;
+function getNetworkLabel(networkType) {
+  return NETWORK_LABELS[normalizeNetworkType(networkType)] || 'Testnet';
+}
+
+function getConfiguredNetworkType() {
+  return normalizeNetworkType(selectedNetworkType || clientConfig?.defaultNetwork || clientConfig?.network);
+}
+
+function getConfiguredHashConnectNetwork(networkType = getConfiguredNetworkType()) {
+  return normalizeNetworkType(networkType);
+}
+
+function updateNetworkSelector() {
+  if (!networkSelectEl) {
+    return;
+  }
+
+  networkSelectEl.innerHTML = '';
+  for (const networkType of supportedNetworkTypes) {
+    const option = document.createElement('option');
+    option.value = networkType;
+    option.textContent = getNetworkLabel(networkType);
+    networkSelectEl.appendChild(option);
+  }
+  networkSelectEl.value = selectedNetworkType;
 }
 
 // Update the wallet status to dynamically display Testnet or Mainnet
 function updateWalletStatus(networkType = connectedNetworkType) {
-  const safeNetworkType = normalizeNetworkType(networkType);
+  const safeNetworkType = normalizeNetworkType(networkType || selectedNetworkType);
+  const selectedNetworkLabel = getNetworkLabel(selectedNetworkType);
   if (connectedAccountId) {
-    walletStatusEl.textContent = `Connected: ${connectedAccountId} (${safeNetworkType === 'mainnet' ? 'Mainnet' : 'Testnet'})`;
+    walletStatusEl.textContent = `Connected: ${connectedAccountId} (${getNetworkLabel(safeNetworkType)})`;
     walletStatusEl.classList.add('connected');
     connectWalletBtn.textContent = 'Disconnect Wallet';
   } else {
-    walletStatusEl.textContent = 'Wallet not connected';
+    walletStatusEl.textContent = `Wallet not connected (${selectedNetworkLabel} selected)`;
     walletStatusEl.classList.remove('connected');
     connectWalletBtn.textContent = 'Connect HashPack';
   }
+}
+
+function clearWalletState() {
+  pairingData = null;
+  connectedAccountId = null;
+  pairingUri = '';
+  connectedNetworkType = selectedNetworkType;
+  updateWalletStatus();
+}
+
+async function ensureClientConfig() {
+  if (clientConfig) {
+    return;
+  }
+
+  const configResponse = await fetch('/client-config');
+  clientConfig = await configResponse.json();
+
+  supportedNetworkTypes = normalizeSupportedNetworkTypes(clientConfig?.supportedNetworks);
+  selectedNetworkType = normalizeNetworkType(clientConfig?.defaultNetwork || clientConfig?.network || 'testnet');
+  if (!supportedNetworkTypes.includes(selectedNetworkType)) {
+    selectedNetworkType = supportedNetworkTypes[0];
+  }
+
+  updateNetworkSelector();
+  updateWalletStatus();
 }
 
 function getFallbackPairingUrl() {
@@ -88,10 +151,7 @@ function isTransferIntent(prompt) {
 }
 
 async function initHashConnect() {
-  if (!clientConfig) {
-    const configResponse = await fetch('/client-config');
-    clientConfig = await configResponse.json();
-  }
+  await ensureClientConfig();
 
   const projectId = clientConfig?.hashconnectProjectId;
   if (!projectId) {
@@ -105,12 +165,12 @@ async function initHashConnect() {
     url: window.location.origin,
   };
 
-  hashconnect = new HashConnect(getConfiguredLedgerId(), projectId, appMetadata, false);
+  hashconnect = new HashConnect(getConfiguredHashConnectNetwork(selectedNetworkType), projectId, appMetadata, false);
 
   hashconnect.pairingEvent.on((session) => {
     pairingData = session;
     connectedAccountId = session?.accountIds?.[0] || null;
-    connectedNetworkType = normalizeNetworkType(session?.network || getConfiguredNetworkType());
+    connectedNetworkType = normalizeNetworkType(session?.network || selectedNetworkType);
     updateWalletStatus(connectedNetworkType);
     if (connectedAccountId) {
       appendMessage('agent', `HashPack connected: ${connectedAccountId}. You can now send HBAR from this wallet.`);
@@ -118,10 +178,7 @@ async function initHashConnect() {
   });
 
   hashconnect.disconnectionEvent.on(() => {
-    pairingData = null;
-    connectedAccountId = null;
-    connectedNetworkType = getConfiguredNetworkType();
-    updateWalletStatus();
+    clearWalletState();
   });
 
   hashconnect.connectionStatusChangeEvent.on((status) => {
@@ -137,10 +194,36 @@ async function initHashConnect() {
   if (existingPairing) {
     pairingData = existingPairing;
     connectedAccountId = existingPairing?.accountIds?.[0] || null;
-    connectedNetworkType = normalizeNetworkType(existingPairing?.network || getConfiguredNetworkType());
+    connectedNetworkType = normalizeNetworkType(existingPairing?.network || selectedNetworkType);
   }
 
   updateWalletStatus(connectedNetworkType);
+}
+
+async function switchNetwork(nextNetworkType) {
+  const normalizedNext = normalizeNetworkType(nextNetworkType);
+  if (!supportedNetworkTypes.includes(normalizedNext)) {
+    throw new Error(`Unsupported network selected: ${nextNetworkType}`);
+  }
+
+  if (normalizedNext === selectedNetworkType) {
+    return;
+  }
+
+  selectedNetworkType = normalizedNext;
+
+  if (hashconnect) {
+    try {
+      hashconnect.disconnect();
+    } catch {
+      // Ignore disconnect errors when switching ledgers.
+    }
+  }
+
+  hashconnect = null;
+  clearWalletState();
+  updateNetworkSelector();
+  await initHashConnect();
 }
 
 async function executeWalletTransfer(parsedTransfer) {
@@ -178,16 +261,15 @@ starterChips.forEach((chip) => {
 
 connectWalletBtn.addEventListener('click', async () => {
   try {
+    await ensureClientConfig();
+
     if (!hashconnect) {
       await initHashConnect();
     }
 
     if (connectedAccountId) {
       hashconnect.disconnect();
-      pairingData = null;
-      connectedAccountId = null;
-      connectedNetworkType = getConfiguredNetworkType();
-      updateWalletStatus();
+      clearWalletState();
       return;
     }
 
@@ -201,6 +283,8 @@ connectWalletBtn.addEventListener('click', async () => {
 if (openPairingBtn) {
   openPairingBtn.addEventListener('click', async () => {
     try {
+      await ensureClientConfig();
+
       if (!hashconnect) {
         await initHashConnect();
       }
@@ -223,6 +307,20 @@ if (openPairingBtn) {
       appendMessage('agent', 'Opened HashPack pairing fallback link in a new tab. Approve pairing there, then return here.');
     } catch (err) {
       appendMessage('agent', `Could not open HashPack pairing fallback: ${err.message}`);
+    }
+  });
+}
+
+if (networkSelectEl) {
+  networkSelectEl.addEventListener('change', async (event) => {
+    const nextNetworkType = event?.target?.value;
+    try {
+      await ensureClientConfig();
+      await switchNetwork(nextNetworkType);
+      appendMessage('agent', `Network switched to ${getNetworkLabel(selectedNetworkType)}. Connect HashPack to continue.`);
+    } catch (err) {
+      updateNetworkSelector();
+      appendMessage('agent', `Unable to switch network: ${err.message}`);
     }
   });
 }
@@ -287,8 +385,10 @@ document.getElementById('chatForm').addEventListener('submit', async function (e
   document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
 });
 
-initHashConnect().catch((err) => {
+ensureClientConfig()
+  .then(() => initHashConnect())
+  .catch((err) => {
   appendMessage('agent', `HashPack not ready yet: ${err.message}`);
-});
+  });
 
 

@@ -151,6 +151,35 @@ input {
 	gap: 12px;
 }
 
+.network-select-wrap {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	min-height: 48px;
+	padding: 0 14px;
+	border-radius: 999px;
+	border: 1px solid var(--border);
+	background: rgba(255, 255, 255, 0.08);
+	color: var(--muted);
+	font-size: 0.85rem;
+}
+
+.network-select {
+	appearance: none;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	background: rgba(14, 18, 47, 0.72);
+	color: var(--text);
+	border-radius: 999px;
+	padding: 6px 26px 6px 12px;
+	min-width: 108px;
+	cursor: pointer;
+}
+
+.network-select:focus {
+	outline: 2px solid rgba(225, 156, 255, 0.65);
+	outline-offset: 1px;
+}
+
 .status-pill,
 .ghost-link,
 .chat-badge,

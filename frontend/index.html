@@ -24,6 +24,13 @@
         <p class="brand-subtitle">Intelligent guidance for the Hedera ecosystem</p>
       </div>
       <div class="header-actions">
+        <label class="network-select-wrap" for="networkSelect">
+          <span>Network</span>
+          <select id="networkSelect" class="network-select" aria-label="Select wallet network">
+            <option value="mainnet">Mainnet</option>
+            <option value="testnet">Testnet</option>
+          </select>
+        </label>
         <button type="button" id="connectWalletBtn" class="wallet-link">Connect HashPack</button>
         <span id="walletStatus" class="wallet-status">Wallet not connected</span>
       </div>

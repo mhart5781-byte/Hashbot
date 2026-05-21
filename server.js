@@ -41,7 +41,26 @@ function normalizeNetworkType(raw) {
   return String(raw || '').toLowerCase() === 'mainnet' ? 'mainnet' : 'testnet';
 }
 
+function parseSupportedNetworkTypes(raw) {
+  if (!raw) {
+    return ['mainnet', 'testnet'];
+  }
+
+  const normalized = Array.from(new Set(
+    String(raw)
+      .split(',')
+      .map((item) => normalizeNetworkType(item.trim()))
+      .filter(Boolean),
+  ));
+
+  return normalized.length > 0 ? normalized : ['mainnet', 'testnet'];
+}
+
 const configuredNetworkType = normalizeNetworkType(process.env.HEDERA_NETWORK || 'mainnet');
+const supportedNetworkTypes = parseSupportedNetworkTypes(process.env.HEDERA_SUPPORTED_NETWORKS || 'mainnet,testnet');
+if (!supportedNetworkTypes.includes(configuredNetworkType)) {
+  supportedNetworkTypes.unshift(configuredNetworkType);
+}
 
 const app = express();
 app.use(express.json());
@@ -1268,9 +1287,11 @@ async function maybeExecuteWalletAction({ prompt, fromAccountId, privateKey, wal
 
 // Final refinement to ensure getNetworkType always returns 'testnet' or 'mainnet'
 function getNetworkType(accountId, walletNetworkType) {
-  const walletResolved = normalizeNetworkType(walletNetworkType);
   if (walletNetworkType) {
-    return walletResolved;
+    const walletResolved = normalizeNetworkType(walletNetworkType);
+    if (supportedNetworkTypes.includes(walletResolved)) {
+      return walletResolved;
+    }
   }
 
   const normalized = normalizeAccountId(accountId);
@@ -1288,6 +1309,8 @@ app.get('/health', (req, res) => {
 app.get('/client-config', (req, res) => {
   res.json({
     network: configuredNetworkType,
+    defaultNetwork: configuredNetworkType,
+    supportedNetworks: supportedNetworkTypes,
     hashconnectProjectId: process.env.HASHCONNECT_PROJECT_ID || '',
   });
 });
