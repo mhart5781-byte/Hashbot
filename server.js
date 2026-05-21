@@ -29,37 +29,39 @@ if (!process.env.HASHCONNECT_PROJECT_ID && fs.existsSync(helloAgentEnvPath)) {
   }
 }
 
-if (!process.env.OPENAI_API_KEY) {
-  throw new Error('Missing OPENAI_API_KEY. Set it in .env or hello-hedera-agent-kit/.env.');
-}
-if (!process.env.HEDERA_ACCOUNT_ID || !process.env.HEDERA_PRIVATE_KEY) {
-  throw new Error('Missing HEDERA_ACCOUNT_ID or HEDERA_PRIVATE_KEY in environment variables.');
-}
+const hasOpenAIKey = Boolean(process.env.OPENAI_API_KEY);
+const hasHederaOperator = Boolean(process.env.HEDERA_ACCOUNT_ID && process.env.HEDERA_PRIVATE_KEY);
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'frontend')));
 
-const baseModel = openai('gpt-4o');
+const baseModel = hasOpenAIKey ? openai('gpt-4o') : null;
 
-const operatorClient = Client.forTestnet().setOperator(
-  process.env.HEDERA_ACCOUNT_ID,
-  PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY),
-);
+const operatorClient = hasHederaOperator
+  ? Client.forTestnet().setOperator(
+    process.env.HEDERA_ACCOUNT_ID,
+    PrivateKey.fromStringECDSA(process.env.HEDERA_PRIVATE_KEY),
+  )
+  : null;
 
-const memejobToolkit = new HederaAIToolkit({
-  client: operatorClient,
-  configuration: {
-    tools: [],
-    plugins: [memejobPlugin],
-    context: { mode: AgentMode.AUTONOMOUS },
-  },
-});
+const memejobToolkit = operatorClient
+  ? new HederaAIToolkit({
+    client: operatorClient,
+    configuration: {
+      tools: [],
+      plugins: [memejobPlugin],
+      context: { mode: AgentMode.AUTONOMOUS },
+    },
+  })
+  : null;
 
-const memejobToolModel = wrapLanguageModel({
-  model: baseModel,
-  middleware: memejobToolkit.middleware(),
-});
+const memejobToolModel = baseModel && memejobToolkit
+  ? wrapLanguageModel({
+    model: baseModel,
+    middleware: memejobToolkit.middleware(),
+  })
+  : null;
 
 const MAX_HISTORY_MESSAGES = 8;
 const MAX_MESSAGE_CHARS = 700;
@@ -454,6 +456,13 @@ async function maybeHandleMemejobMarketAction({ prompt, history }) {
     return { handled: false };
   }
 
+  if (!memejobToolModel || !memejobToolkit) {
+    return {
+      handled: true,
+      response: 'Memejob actions are temporarily unavailable because Hedera operator credentials are not configured on this deployment.',
+    };
+  }
+
   const normalizedHistory = normalizeHistory(history);
   const toolResult = await generateText({
     model: memejobToolModel,
@@ -747,6 +756,10 @@ async function getWalletSnapshot(accountId) {
 }
 
 async function executeHbarTransfer({ amount, toAccountId, fromAccountId, sourcePrivateKey }) {
+  if (!operatorClient) {
+    throw new Error('HBAR transfer is unavailable because HEDERA_ACCOUNT_ID or HEDERA_PRIVATE_KEY is not configured.');
+  }
+
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error('Transfer amount must be a positive number of HBAR.');
   }
@@ -912,6 +925,12 @@ app.post('/agent', async (req, res) => {
     return res.status(400).json({ error: 'Missing prompt field.' });
   }
 
+  if (!baseModel) {
+    return res.status(503).json({
+      error: 'OPENAI_API_KEY is missing on this deployment. Configure it in Vercel Project Settings -> Environment Variables.',
+    });
+  }
+
   const trimmedPrompt = clampText(prompt, MAX_MESSAGE_CHARS);
 
   try {
@@ -994,6 +1013,10 @@ app.post('/agent', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}
+
+export default app;
