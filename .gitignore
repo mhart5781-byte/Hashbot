@@ -5,3 +5,4 @@ node_modules
 *.log
 *.err
 hello-hedera-agent-kit/.env
+.env*.local
